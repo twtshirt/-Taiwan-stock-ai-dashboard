@@ -14,14 +14,6 @@ from sklearn.metrics import accuracy_score
 
 class StockAnalyzer:
     def __init__(self, ticker):
-        # 判斷並保留 yfinance 專用的完整代號 (包含 .TW 或 .TWO)
-    if not ticker.endswith(('.TW', '.TWO')):
-        # 若使用者沒輸入後綴，這裡可以自訂預設值，或由外部強制要求輸入完整代號
-        self.yahoo_ticker = f"{ticker}.TW" 
-    else:
-        self.yahoo_ticker = ticker
-        
-    # 原本的 self.ticker 保持純數字，供後續 FinMind API 使用
         self.ticker = ticker.replace('.TWO', '').replace('.TW', '') # 確保內部存儲不含 .TW
         self.df = pd.DataFrame()  # 主要存放K線數據
         self.df_fin = pd.DataFrame() # 存放財報數據
@@ -247,9 +239,10 @@ class StockAnalyzer:
     def fetch_data(self, period='3y'):
         """下載股票數據、財報、法人籌碼、融資融券、期貨借券等數據。"""
         print(f"\n----- 開始為 {self.ticker} 下載數據 (期間: {period}) -----")
-        self.df = yf.download(self.yahoo_ticker, period=period, progress=False)
+        self.df = yf.download(f'{self.ticker}.TW', period=period, progress=False)
+        self.df = yf.download(f'{self.ticker}.TWO', period=period, progress=False)
         if self.df.empty:
-            print(f"錯誤: 無法下載 {self.yahoo_ticker} 的 K 線數據。")
+            print(f"錯誤: 無法下載 {self.ticker}.TW 的 K 線數據。")
             return False
         self.df = self._fix_col_names(self.df)
         self.df.index = pd.to_datetime(self.df.index)
