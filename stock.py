@@ -14,7 +14,7 @@ from sklearn.metrics import accuracy_score
 
 class StockAnalyzer:
     def __init__(self, ticker):
-        self.ticker = ticker.replace('.TW', '') # 確保內部存儲不含 .TW
+        self.ticker = ticker.replace('.TWO', '').replace('.TW', '') # 確保內部存儲不含 .TW
         self.df = pd.DataFrame()  # 主要存放K線數據
         self.df_fin = pd.DataFrame() # 存放財報數據
         self.df_inst_pivot = pd.DataFrame() # 存放法人籌碼
@@ -30,6 +30,130 @@ class StockAnalyzer:
         self.model_mega = None # 儲存訓練好的模型
         self.X_test_mega = pd.DataFrame() # 儲存測試集特徵
         self.y_pred_mega = np.array([]) # 儲存測試集預測結果
+
+
+    def train_xgboost(self, feature_cols, target_col='Target', max_depth=4, learning_rate=0.05):
+        """在 StockAnalyzer 內訓練 XGBoost 模型"""
+        import xgboost as xgb
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import accuracy_score
+
+        # 確保資料無缺失值
+        df_clean = self.df.dropna(subset=feature_cols + [target_col])
+        X = df_clean[feature_cols]
+        y = df_clean[target_col]
+
+        # 切割資料集 (保留時間序列特性)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+        # 建立與訓練模型
+        self.model_mega = xgb.XGBClassifier(
+            n_estimators=150,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            random_state=42
+        )
+        self.model_mega.fit(X_train, y_train)
+
+        # 預測與評估
+        self.X_test_mega = X_test
+        self.y_pred_mega = self.model_mega.predict(X_test)
+
+        acc = accuracy_score(y_test, self.y_pred_mega)
+        print(f"🎯 XGBoost 模型訓練完成，測試集準確度: {acc:.2%}")
+        return acc
+
+
+    def train_lstm(self, feature_cols=['close', 'rsi_14', 'macd'], target_col='close', seq_length=15, epochs=50, lr=0.005):
+        """在 StockAnalyzer 內訓練多特徵 LSTM 模型"""
+        import torch
+        import torch.nn as nn
+        import numpy as np
+        from sklearn.preprocessing import MinMaxScaler
+        from sklearn.metrics import accuracy_score
+
+        # 確保資料無缺失值
+        df_clean = self.df.dropna(subset=feature_cols)
+        data_x = df_clean[feature_cols].values
+        
+        # 設定預測目標對應的 index (用來在評估時取得「今日價格」)
+        target_idx = feature_cols.index(target_col) if target_col in feature_cols else 0
+        data_y = df_clean[[target_col]].values if target_col in df_clean.columns else df_clean[['close']].values
+
+        # 特徵與目標的標準化
+        scaler_x = MinMaxScaler(feature_range=(0, 1))
+        scaled_x = scaler_x.fit_transform(data_x)
+
+        scaler_y = MinMaxScaler(feature_range=(0, 1))
+        scaled_y = scaler_y.fit_transform(data_y)
+
+        # 建立時間序列 (Time Sequences)
+        xs, ys = [], []
+        for i in range(len(scaled_x) - seq_length):
+            xs.append(scaled_x[i:i+seq_length])
+            ys.append(scaled_y[i+seq_length])
+        X_m, y_m = np.array(xs), np.array(ys)
+
+        # 切割訓練與測試集 (80% / 20%)
+        split_idx = int(0.8 * len(X_m))
+        X_train_m = torch.tensor(X_m[:split_idx], dtype=torch.float32)
+        X_test_m = torch.tensor(X_m[split_idx:], dtype=torch.float32)
+        y_train_m = torch.tensor(y_m[:split_idx], dtype=torch.float32)
+        y_test_m = torch.tensor(y_m[split_idx:], dtype=torch.float32)
+
+        # 內部定義 LSTM 模型架構
+        class MultiFeatureLSTM(nn.Module):
+            def __init__(self, input_dim, hidden_dim=64, num_layers=2):
+                super(MultiFeatureLSTM, self).__init__()
+                self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
+                self.fc = nn.Linear(hidden_dim, 1)
+
+            def forward(self, x):
+                out, _ = self.lstm(x)
+                out = self.fc(out[:, -1, :])
+                return out
+
+        model = MultiFeatureLSTM(input_dim=len(feature_cols))
+        criterion = nn.MSELoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+        print(f"🚀 開始訓練多特徵 LSTM 模型 (輸入特徵: {feature_cols})...")
+        for epoch in range(epochs):
+            model.train()
+            optimizer.zero_grad()
+            y_pred = model(X_train_m)
+            loss = criterion(y_pred, y_train_m)
+            loss.backward()
+            optimizer.step()
+            
+            if (epoch+1) % 10 == 0:
+                print(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item():.6f}")
+
+        # 模型評估
+        model.eval()
+        with torch.no_grad():
+            preds_scaled = model(X_test_m).numpy()
+
+        # 還原股價數值
+        preds = scaler_y.inverse_transform(preds_scaled)
+        actual = scaler_y.inverse_transform(y_test_m.numpy())
+
+        current_prices_scaled = X_test_m[:, -1, target_idx].numpy().reshape(-1, 1)
+        current_prices = scaler_y.inverse_transform(current_prices_scaled)
+
+        # 計算漲跌方向
+        pred_dir = (preds > current_prices).astype(int)
+        actual_dir = (actual > current_prices).astype(int)
+
+        acc = accuracy_score(actual_dir, pred_dir)
+        print(f"🎯 LSTM 模型訓練完成，測試集方向預測準確度: {acc:.2%}")
+        
+        # 儲存模型與 scaler 供後續使用
+        self.model_lstm = model
+        self.scaler_lstm_x = scaler_x
+        self.scaler_lstm_y = scaler_y
+        
+        return acc
 
     def _fix_col_names(self, df_param: pd.DataFrame) -> pd.DataFrame:
         """根據指定邏輯清洗 DataFrame 的欄位名稱。"""
