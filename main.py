@@ -121,7 +121,7 @@ def analyze(req: AnalyzeRequest):
     plot = analyzer.get_multi_panel_plot(analyzer.df)
 
     return {
-        "ticker": f"{ticker}.TW" if not ticker.endswith((".TW", ".TWO")) else ticker
+        "ticker": f"{ticker}.TW"
         "bias": analyzer.get_bias_text(analyzer.df),
         "indicator_summary": analyzer.get_indicator_summary(),
         "macd_analysis": analyzer.get_macd_diagnostics(),
