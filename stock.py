@@ -239,10 +239,16 @@ class StockAnalyzer:
     def fetch_data(self, period='3y'):
         """下載股票數據、財報、法人籌碼、融資融券、期貨借券等數據。"""
         print(f"\n----- 開始為 {self.ticker} 下載數據 (期間: {period}) -----")
+# 1. 先嘗試當作「上市股票」抓取 (.TW)
         self.df = yf.download(f'{self.ticker}.TW', period=period, progress=False)
-        self.df = yf.download(f'{self.ticker}.TWO', period=period, progress=False)
+        
+        # 2. 如果抓不到資料 (DataFrame為空)，自動切換為「上櫃股票」抓取 (.TWO)
         if self.df.empty:
-            print(f"錯誤: 無法下載 {self.ticker}.TW 的 K 線數據。")
+            self.df = yf.download(f'{self.ticker}.TWO', period=period, progress=False)
+            
+        # 3. 如果還是空的，代表代號錯誤或網路問題
+        if self.df.empty:
+            print(f"錯誤: 無法下載 {self.ticker} 的 K 線數據 (上市與上櫃皆無資料)。")
             return False
         self.df = self._fix_col_names(self.df)
         self.df.index = pd.to_datetime(self.df.index)
