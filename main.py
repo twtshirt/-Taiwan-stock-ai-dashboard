@@ -110,7 +110,7 @@ def analyze(req: AnalyzeRequest):
         raise HTTPException(status_code=400, detail="不支援的資料區間")
 
     ticker = req.ticker.strip().upper()
-        ticker = ticker if ticker.endswith((".TW", ".TWO")) else ticker
+    ticker = ticker if ticker.endswith((".TW", ".TWO")) else ticker
     if not ticker:
         raise HTTPException(status_code=400, detail="請輸入股票代號")
 
