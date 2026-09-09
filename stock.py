@@ -13,8 +13,24 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 
 class StockAnalyzer:
+    def _autodetect_ticker(self, ticker):
+        if ticker.endswith(('.TW', '.TWO')):
+            return ticker
+        import yfinance as yf
+        try:
+            # 測試 .TW (上市)
+            if not yf.download(f"{ticker}.TW", period="1d", progress=False).empty:
+                return f"{ticker}.TW"
+            # 測試 .TWO (上櫃)
+            if not yf.download(f"{ticker}.TWO", period="1d", progress=False).empty:
+                return f"{ticker}.TWO"
+        except Exception:
+            pass
+        # 找不到的話，預設回傳加 .TW 的結果
+        return f"{ticker}.TW"
+
     def __init__(self, ticker):
-        self.ticker = ticker if ticker.endswith((".TW", ".TWO")) else ticker
+        self.ticker = self._autodetect_ticker(ticker)
         self.df = pd.DataFrame()  # 主要存放K線數據
         self.df_fin = pd.DataFrame() # 存放財報數據
         self.df_inst_pivot = pd.DataFrame() # 存放法人籌碼
