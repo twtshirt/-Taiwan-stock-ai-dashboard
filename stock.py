@@ -14,7 +14,7 @@ from sklearn.metrics import accuracy_score
 
 class StockAnalyzer:
     def __init__(self, ticker):
-        self.ticker = ticker if ticker.endswith((".TW", ".TWO")) else f"{ticker}.TW"
+        self.ticker = ticker if ticker.endswith((".TW", ".TWO")) else ticker
         self.df = pd.DataFrame()  # 主要存放K線數據
         self.df_fin = pd.DataFrame() # 存放財報數據
         self.df_inst_pivot = pd.DataFrame() # 存放法人籌碼
@@ -498,7 +498,7 @@ class StockAnalyzer:
         tickers = [t.strip() for t in tickers_str.split(',') if t.strip()]
         for ticker in tickers:
             try:
-                sym = f"{ticker}.TW" if not ticker.endswith((".TW", ".TWO")) else ticker
+                sym = ticker if not ticker.endswith((".TW", ".TWO")) else ticker
                 df = yf.download(sym, period='60d', progress=False)
                 if df.empty: continue
                 df = self._fix_col_names(df)
