@@ -14,7 +14,7 @@ from sklearn.metrics import accuracy_score
 
 class StockAnalyzer:
     def __init__(self, ticker):
-        self.ticker = ticker.replace('.TWO', '').replace('.TW', '') # 確保內部存儲不含 .TW
+        self.ticker = ticker if ticker.endswith((".TW", ".TWO")) else f"{ticker}.TW"
         self.df = pd.DataFrame()  # 主要存放K線數據
         self.df_fin = pd.DataFrame() # 存放財報數據
         self.df_inst_pivot = pd.DataFrame() # 存放法人籌碼
@@ -239,16 +239,9 @@ class StockAnalyzer:
     def fetch_data(self, period='3y'):
         """下載股票數據、財報、法人籌碼、融資融券、期貨借券等數據。"""
         print(f"\n----- 開始為 {self.ticker} 下載數據 (期間: {period}) -----")
-# 1. 先嘗試當作「上市股票」抓取 (.TW)
-        self.df = yf.download(f'{self.ticker}.TW', period=period, progress=False)
-        
-        # 2. 如果抓不到資料 (DataFrame為空)，自動切換為「上櫃股票」抓取 (.TWO)
+        self.df = yf.download(self.ticker, period=period, progress=False)
         if self.df.empty:
-            self.df = yf.download(f'{self.ticker}.TWO', period=period, progress=False)
-            
-        # 3. 如果還是空的，代表代號錯誤或網路問題
-        if self.df.empty:
-            print(f"錯誤: 無法下載 {self.ticker} 的 K 線數據 (上市與上櫃皆無資料)。")
+            print(f"錯誤: 無法下載 {self.ticker} 的 K 線數據。")
             return False
         self.df = self._fix_col_names(self.df)
         self.df.index = pd.to_datetime(self.df.index)
@@ -473,7 +466,7 @@ class StockAnalyzer:
             bias = ((c - m) / m * 100) if m else np.nan
         else:
             bias = np.nan
-        return f"{self.ticker}.TW 最新 20 日乖離率: {bias:.2f}%"
+        return f"{self.ticker} 最新 20 日乖離率: {bias:.2f}%"
 
     def get_indicator_summary(self):
         if self.df.empty: return "尚無技術指標資料。"
@@ -481,7 +474,7 @@ class StockAnalyzer:
         c = float(r['close']) if pd.notna(r.get('close')) else np.nan
         m20 = float(r['ma20']) if pd.notna(r.get('ma20')) else np.nan
         trend = "多頭" if c > m20 else "空頭"
-        return f"**{self.ticker}.TW 最新技術指標**\n\n收盤 {c:.2f}｜MA20 {m20:.2f} → **{trend}**\nRSI {float(r.get('rsi',0)):.1f}｜MACD柱體 {float(r.get('macd_histogram',0)):.2f}"
+        return f"**{self.ticker} 最新技術指標**\n\n收盤 {c:.2f}｜MA20 {m20:.2f} → **{trend}**\nRSI {float(r.get('rsi',0)):.1f}｜MACD柱體 {float(r.get('macd_histogram',0)):.2f}"
 
     def get_news_analysis(self, days=5):
         return f"## 📰 {self.ticker} 最近 {days} 日新聞分析\n\n資料已由後端安全連線整理完成。"

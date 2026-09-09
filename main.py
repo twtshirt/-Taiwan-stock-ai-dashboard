@@ -102,34 +102,27 @@ def market_scan(
     df, status = scanner.scan(market, candidate_count, min_score)
     return {"status": status, "data": df_records(df)}
 
+
 @app.post("/api/analyze")
 def analyze(req: AnalyzeRequest):
     allowed_periods = {"3mo", "6mo", "1y", "2y", "3y", "5y", "max"}
     if req.period not in allowed_periods:
         raise HTTPException(status_code=400, detail="不支援的資料區間")
 
-    # 保留使用者的原始輸入 (例如: 3105, 3105.TW, 或 3105.TWO)
-    original_ticker = req.ticker.strip().upper()
-    
-    # 提取純數字代號供 FinMind 使用
-    pure_ticker = original_ticker.replace(".TW", "").replace(".TWO", "")
-    
-    if not pure_ticker:
+    ticker = req.ticker.strip().upper()
+        ticker = ticker if ticker.endswith((".TW", ".TWO")) else ticker
+    if not ticker:
         raise HTTPException(status_code=400, detail="請輸入股票代號")
 
-    # 傳入純數字代號給 StockAnalyzer (搭配你在 stock.py 中實作的 TW/TWO 自動降級嘗試)
-    analyzer = StockAnalyzer(pure_ticker)
+    analyzer = StockAnalyzer(ticker)
     if not analyzer.fetch_data(period=req.period):
-        raise HTTPException(status_code=404, detail=f"無法取得 {original_ticker} 的股票資料")
+        raise HTTPException(status_code=404, detail=f"無法取得 {ticker} 的股票資料")
 
     analyzer.engineer_features()
     plot = analyzer.get_multi_panel_plot(analyzer.df)
 
-    # 動態決定回傳的顯示代號 (若有抓到資料，可依據使用者輸入或預設返回)
-    display_ticker = original_ticker if ".TWO" in original_ticker else f"{pure_ticker}.TW"
-
     return {
-        "ticker": display_ticker,  # 移除寫死的 f"{ticker}.TW"
+        "ticker": ticker,
         "bias": analyzer.get_bias_text(analyzer.df),
         "indicator_summary": analyzer.get_indicator_summary(),
         "macd_analysis": analyzer.get_macd_diagnostics(),
@@ -137,8 +130,11 @@ def analyze(req: AnalyzeRequest):
         "news": df_records(analyzer._fetch_news(days=5)),
         "news_analysis": analyzer.get_news_analysis(days=5),
         "ai_analysis": analyzer.get_ai_prediction_text(),
+        # 使用 Plotly 自己的 JSON encoder，避免 NumPy / pandas / NaN / Timestamp
+        # 直接交給 FastAPI JSONResponse 時造成 500 Internal Server Error。
         "plot": json.loads(plot.to_json()),
     }
+
 
 @app.post("/api/watchlist")
 def watchlist(req: WatchlistRequest):
