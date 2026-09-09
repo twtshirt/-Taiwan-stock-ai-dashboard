@@ -587,16 +587,103 @@ class StockAnalyzer:
             except Exception: pass
         return pd.DataFrame(results)
 
+
+
 class TaiwanMarketScanner:
     TWSE_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     TPEx_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
 
     def get_market_snapshot(self, market="上市＋上櫃"):
-        # 實作市場快照
-        return pd.DataFrame()
+        import requests
+        import pandas as pd
+        import numpy as np
+
+        dfs = []
+
+        if "上市" in market:
+            try:
+                res = requests.get(self.TWSE_URL, timeout=10)
+                if res.status_code == 200:
+                    df_twse = pd.DataFrame(res.json())
+                    df_twse = df_twse.rename(columns={
+                        'Code': 'Ticker', 'Name': 'Name', 
+                        'TradeVolume': 'Volume', 'TradeValue': 'TradeValue',
+                        'OpeningPrice': 'Open', 'HighestPrice': 'High',
+                        'LowestPrice': 'Low', 'ClosingPrice': 'Close', 'Change': 'Change'
+                    })
+                    df_twse['Market'] = '上市'
+                    dfs.append(df_twse)
+            except Exception as e:
+                print(f"TWSE fetch error: {e}")
+
+        if "上櫃" in market:
+            try:
+                res = requests.get(self.TPEx_URL, timeout=10)
+                if res.status_code == 200:
+                    df_tpex = pd.DataFrame(res.json())
+                    df_tpex = df_tpex.rename(columns={
+                        'SecuritiesCompanyCode': 'Ticker', 'CompanyName': 'Name',
+                        'TradingShares': 'Volume', 'TransactionAmount': 'TradeValue',
+                        'Open': 'Open', 'High': 'High', 'Low': 'Low', 
+                        'Close': 'Close', 'Change': 'Change'
+                    })
+                    df_tpex['Market'] = '上櫃'
+                    dfs.append(df_tpex)
+            except Exception as e:
+                print(f"TPEx fetch error: {e}")
+
+        if not dfs:
+            return pd.DataFrame()
+
+        df = pd.concat(dfs, ignore_index=True)
+        
+        cols_to_numeric = ['Volume', 'TradeValue', 'Open', 'High', 'Low', 'Close', 'Change']
+        for col in cols_to_numeric:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce')
+
+        # 計算漲跌幅 (%)：由於原始 Change 可能只是數值差，利用 (Change / (Close - Change)) * 100 推算
+        df['ChangePct'] = np.where(
+            (df['Close'] - df['Change']) != 0,
+            (df['Change'] / (df['Close'] - df['Change'])) * 100,
+            0
+        )
+        df['ChangePct'] = df['ChangePct'].round(2)
+
+        # 過濾掉權證等，只保留 4 碼數字的一般股票
+        df = df[df['Ticker'].astype(str).str.match(r'^[0-9]{4}$')]
+        
+        return df
 
     def get_top_gainers(self, market="上市＋上櫃", top_n=100, min_trade_value=0):
-        return pd.DataFrame(), "完成漲幅排行查詢。"
+        import pandas as pd
+        df = self.get_market_snapshot(market)
+        if df.empty:
+            return pd.DataFrame(), "無法取得市場資料"
+        
+        if min_trade_value > 0:
+            df = df[df['TradeValue'] >= min_trade_value]
+            
+        df = df.sort_values(by='ChangePct', ascending=False).head(top_n)
+        return df, f"完成漲幅排行查詢，共 {len(df)} 筆符合條件。"
 
     def scan(self, market="上市＋上櫃", candidate_count=60, min_score=60):
-        return pd.DataFrame(), "完成全市場選股掃描。"
+        import pandas as pd
+        df = self.get_market_snapshot(market)
+        if df.empty:
+            return pd.DataFrame(), "無法取得市場資料"
+        
+        # 過濾掉雞蛋水餃股或流動性極差的股票
+        df = df[(df['Close'] > 5) & (df['Volume'] > 100000)].copy()
+        if df.empty:
+            return df, "過濾後無符合條件之股票"
+            
+        # 計算動能與量能的綜合分數
+        df['PctRank'] = df['ChangePct'].rank(pct=True) * 50
+        df['VolRank'] = df['TradeValue'].rank(pct=True) * 50
+        df['Score'] = (df['PctRank'] + df['VolRank']).round(2)
+        
+        df = df[df['Score'] >= min_score]
+        df = df.sort_values(by='Score', ascending=False).head(candidate_count)
+        
+        return df, f"完成全市場選股掃描，找出 {len(df)} 檔強勢候選股。"
