@@ -236,10 +236,70 @@ class StockAnalyzer:
         out = pd.DataFrame(rows).drop_duplicates(subset=["日期", "標題"]).sort_values("日期", ascending=False)
         return out.head(30).reset_index(drop=True)
 
+
+    def _download_data(self, sym, period='3y'):
+        import yfinance as yf
+        import pandas as pd
+        import requests
+        from datetime import datetime, timedelta
+
+        df = pd.DataFrame()
+        try:
+            df = yf.download(sym, period=period, progress=False)
+        except Exception:
+            pass
+
+        if not df.empty:
+            return df
+
+        print(f"⚠️ yfinance 無法下載 {sym}，嘗試使用 FinMind 備援 API...")
+        data_id = sym.replace('.TW', '').replace('.TWO', '')
+        
+        days = 1095
+        if period.endswith('y'):
+            days = int(period[:-1]) * 365
+        elif period.endswith('d'):
+            days = int(period[:-1])
+        elif period.endswith('mo'):
+            days = int(period[:-2]) * 30
+            
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        
+        url = "https://api.finmindtrade.com/api/v4/data"
+        params = {
+            "dataset": "TaiwanStockPrice",
+            "data_id": data_id,
+            "start_date": start_date
+        }
+        
+        try:
+            res = requests.get(url, params=params)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get('msg') == 'success' and len(data.get('data', [])) > 0:
+                    df_fm = pd.DataFrame(data['data'])
+                    df_fm = df_fm.rename(columns={
+                        'date': 'Date',
+                        'open': 'Open',
+                        'max': 'High',
+                        'min': 'Low',
+                        'close': 'Close',
+                        'Trading_Volume': 'Volume'
+                    })
+                    df_fm['Date'] = pd.to_datetime(df_fm['Date'])
+                    df_fm.set_index('Date', inplace=True)
+                    df_fm = df_fm[['Open', 'High', 'Low', 'Close', 'Volume']]
+                    print(f"✅ 成功透過 FinMind 取得 {sym} 資料！")
+                    return df_fm
+        except Exception as e:
+            print(f"❌ FinMind 備援也失敗: {e}")
+
+        return pd.DataFrame()
+
     def fetch_data(self, period='3y'):
         """下載股票數據、財報、法人籌碼、融資融券、期貨借券等數據。"""
         print(f"\n----- 開始為 {self.ticker} 下載數據 (期間: {period}) -----")
-        self.df = yf.download(self.ticker, period=period, progress=False)
+        self.df = self._download_data(self.ticker, period=period)
         if self.df.empty:
             print(f"錯誤: 無法下載 {self.ticker} 的 K 線數據。")
             return False
@@ -499,7 +559,7 @@ class StockAnalyzer:
         for ticker in tickers:
             try:
                 sym = ticker if not ticker.endswith((".TW", ".TWO")) else ticker
-                df = yf.download(sym, period='60d', progress=False)
+                df = self._download_data(sym, period='60d')
                 if df.empty: continue
                 df = self._fix_col_names(df)
                 c = df['close'].iloc[-1]
